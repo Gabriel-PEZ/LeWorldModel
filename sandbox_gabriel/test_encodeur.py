@@ -32,6 +32,8 @@ unfold = nn.Unfold(
     stride=patch_size
 )
 patches = unfold(images).transpose(1,2)
+print(patches.shape[-1])
+# %%
 
 embedding_dim = 192 # embedding_dim
 linear = nn.Linear(
@@ -50,6 +52,7 @@ batch_cls_token = cls_token.repeat(B,1,1)
 # positional embedding matrix 
 # à utiliser avec nn.Parameter quand on utilisera le réseau
 E = torch.randn(1, 257, 192).repeat(B, 1, 1)
+
 # %%
 
 X = torch.cat([batch_cls_token, patches], dim=1)
@@ -79,7 +82,7 @@ class AttentionHead(nn.Module):
         A = Q @ K.transpose(1,2)/np.sqrt(self.QK_dim)
 
         if mask:   
-            causal_mask = torch.triu(torch.ones(X.shape[1], X.shape[1], dtype=torch.bool), diagonal=1, device=X.device)
+            causal_mask = torch.triu(torch.ones(X.shape[1], X.shape[1], dtype=torch.bool, device=X.device), diagonal=1)
             A = A.masked_fill(causal_mask, float("-inf"))
             
         S = softmax(A, dim=-1)
@@ -128,7 +131,6 @@ class TransformerBlock(nn.Module):
             embedding_dim=embedding_dim,
             QK_dim=QK_dim,
             V_dim=V_dim,
-            output_dim=embedding_dim
         )
 
         self.ln1 = nn.LayerNorm(normalized_shape=embedding_dim)
@@ -144,4 +146,97 @@ class TransformerBlock(nn.Module):
         Z = X + self.mha(self.ln1(X), mask)
         return Z + self.mlp(self.ln2(Z))
 
+# %%
+
+class VisionTransformer(nn.Module):
+
+    def __init__(
+            self, 
+            num_layers,
+            patch_size,
+            image_size,
+            num_heads, 
+            embedding_dim, 
+            QK_dim, 
+            V_dim, 
+            hidden_dim_mlp,
+        ):
+
+        super().__init__()
+        self.num_layers = num_layers
+        self.unfold = nn.Unfold(
+            kernel_size=patch_size,
+            stride=patch_size
+        )
+
+        self.linear = nn.Linear(
+            3 * patch_size**2,
+            embedding_dim
+        )
+
+        num_patches = (image_size // patch_size) ** 2 # 16*16 pour patch_size = 14
+
+        # pas de détail dans LeWM mais dans VIT cls init à 0 et E_pos à N(0,0.02^2)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+        self.E_pos = nn.Parameter(torch.randn(1, num_patches + 1, embedding_dim) * 0.02)
+
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(num_heads, embedding_dim, QK_dim, V_dim, hidden_dim_mlp) for _ in range(num_layers)
+        ])
+        self.ln = nn.LayerNorm(embedding_dim)
+
+
+    def forward(self, X, mask=False):
+
+        patches = self.linear(self.unfold(X).transpose(1,2))
+        batch_cls_token = self.cls_token.repeat(X.shape[0],1,1)
+        X = torch.cat([batch_cls_token, patches], dim=1)
+        X = X + self.E_pos # pos embedding
+
+        for layer in range(self.num_layers):
+            X = self.transformer_blocks[layer](X, mask)
+        X = self.ln(X) # normalisation finale
+        return X[:,0,:] # return uniquement token_cls
+
+
+
+class Encoder(nn.Module):
+
+    def __init__(
+            self, 
+            num_layers,
+            patch_size,
+            image_size,
+            num_heads, 
+            embedding_dim, 
+            QK_dim, 
+            V_dim, 
+            hidden_dim_mlp,
+        ):
+
+        super().__init__()
+        self.vit = VisionTransformer(
+            num_layers=num_layers,
+            patch_size=patch_size,
+            image_size=image_size,
+            num_heads=num_heads,
+            embedding_dim=embedding_dim,
+            QK_dim=QK_dim,
+            V_dim=V_dim,
+            hidden_dim_mlp=hidden_dim_mlp
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim)
+        )
+
+        self.bn = nn.BatchNorm1d(embedding_dim)
+
+    def forward(self, X, mask=False):
+        X_cls = self.vit(X, mask)
+        return self.bn(self.mlp(X_cls))
+
+# %%
+
+torch.randn(B, 257, 192) + torch.randn(1, 257, 192)
 # %%
