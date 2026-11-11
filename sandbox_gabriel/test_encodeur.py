@@ -85,7 +85,29 @@ class AttentionHead(nn.Module):
         S = softmax(A, dim=-1)
         
         return S @ V
-        
+
+
+class MultiHeadAttention(nn.Module):
+
+    def __init__(self, num_heads, embedding_dim, QK_dim, V_dim, output_dim):
+        super().__init__()
+
+        self.multi_head = nn.ModuleList(
+            [AttentionHead(embedding_dim, QK_dim, V_dim) for _ in range(num_heads)]
+        )
+        self.linear = nn.Linear(
+            num_heads * V_dim,
+            output_dim
+        )
+        self.num_heads = num_heads
+
+    def forward(self, X, mask=False):
+
+        H = []
+        for head in range(self.num_heads):
+            H.append(self.multi_head[head](X, mask))
+
+        return self.linear(torch.concat(H, dim=-1))
 
 
 # %%
