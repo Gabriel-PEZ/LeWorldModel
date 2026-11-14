@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.nn.functional import softmax
 
 # %%
@@ -13,13 +13,15 @@ class AttentionHead(nn.Module):
             self,
             embedding_dim,
             QK_dim,
-            V_dim
+            V_dim,
+            p_dropout=0.0
     ):
         super().__init__()
         self.QK_dim = QK_dim
         self.W_Q = nn.Linear(embedding_dim, QK_dim, bias=False)
         self.W_K = nn.Linear(embedding_dim, QK_dim, bias=False)
         self.W_V = nn.Linear(embedding_dim, V_dim, bias=False)
+        self.dropout = nn.Dropout(p=p_dropout)
 
     def forward(self, X, mask=False):
 
@@ -33,21 +35,25 @@ class AttentionHead(nn.Module):
             A = A.masked_fill(causal_mask, float("-inf"))
             
         S = softmax(A, dim=-1)
+        S = self.dropout(S)
         
         return S @ V
 
 
 class MultiHeadAttention(nn.Module):
 
-    def __init__(self, num_heads, embedding_dim, QK_dim, V_dim):
+    def __init__(self, num_heads, embedding_dim, QK_dim, V_dim, p_dropout=0.0):
         super().__init__()
 
         self.multi_head = nn.ModuleList(
-            [AttentionHead(embedding_dim, QK_dim, V_dim) for _ in range(num_heads)]
+            [AttentionHead(embedding_dim, QK_dim, V_dim, p_dropout) for _ in range(num_heads)]
         )
-        self.linear = nn.Linear(
-            num_heads * V_dim,
-            embedding_dim
+        self.linear = nn.Sequential(
+            nn.Linear(
+                num_heads * V_dim,
+                embedding_dim
+            ),
+            nn.Dropout(p=p_dropout)
         )
         self.num_heads = num_heads
 
