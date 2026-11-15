@@ -54,12 +54,27 @@ class Predictor(nn.Module):
         # here it encodes the temporal position
         self.E_pos = nn.Parameter(torch.randn(1, N, embedding_dim))
 
-    def forward(self, X, A, mask=True):
+    def forward(self, Z, A, mask=True):
         """
-        X : (B, N, d) B = batch_size, N = history length, d = embedding_dim
+        Z : (B, L, d)
+        A : (B, L, K * action_dim)
+
+        B : batch size
+        L : input sequence length (L <= N) during training = T-1
+        d : embedding dimension
+        N : maximum history length
+        K : frame skip
+
+        For example if we have a sequence of observations o1,...,o20, with a frame skip 
+        K = 5, we have z0 = Embedding(o0), z1 = Embedding(o5), z2 = Embedding(o10), 
+        z3 = Embedding(o15), z4 = Embedding(o20). If T = 4, N = 3, X = (z1, z2, z3, z4), 
+        hat(z2) = Predictor(z1, A1) where A1 = (a5, a6, a7, a8, a9)
+        hat(z3) = Predictor(z1, z2, A1, A2) where A2 = (a10, a11, a12, a13, a14)
+        hat(z4) = Predictor(z1, z2, z3, A1, A2, A3) where A3 = (a15, a16, a17, a18, a19)
+        ie A_j = (a_Kj, a_{Kj+1}, ..., a_{Kj+K-1})
         """
         A = self.action_embedder(A)
-        X = X + self.E_pos[:, :X.sahpe[1], :] # in case where dim 2 of X is < N
+        Z = Z + self.E_pos[:, :Z.shape[1], :] # in case where dim 2 of X is < N
         for layer in range(self.num_layers):
-            X = self.transformer_blocks[layer](X, A, mask)
-        return self.proj(self.ln(X))
+            Z = self.transformer_blocks[layer](Z, A, mask)
+        return self.proj(self.ln(Z))

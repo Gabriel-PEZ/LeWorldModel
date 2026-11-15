@@ -45,7 +45,8 @@ class Encoder(nn.Module):
 
     def forward(self, X, mask=False):
         """
-        X_cls : B * embedding_dim (192)
+        X : (B, 3, 224, 224)
+        Returns latent representations Z : B * embedding_dim (192)
         """
         X_cls = self.vit(X, mask)
         return self.proj(X_cls)
