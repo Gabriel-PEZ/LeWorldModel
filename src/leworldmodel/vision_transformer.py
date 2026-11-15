@@ -46,6 +46,9 @@ class VisionTransformer(nn.Module):
 
 
     def forward(self, X, mask=False):
+        """
+        Returns X of size (B * embedding_dim)
+        """
 
         patches = self.linear(self.unfold(X).transpose(1,2))
         batch_cls_token = self.cls_token.repeat(X.shape[0],1,1)

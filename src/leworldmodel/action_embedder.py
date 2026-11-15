@@ -9,7 +9,11 @@ class ActionEmbedder(nn.Module):
     Architecture from the official repo of LeWM
     """
 
-    def __init__(self, frame_skip, action_dim):
+    def __init__(
+            self, 
+            frame_skip, 
+            action_dim,
+        ):
 
         super().__init__()
         self.mlp = nn.Sequential(

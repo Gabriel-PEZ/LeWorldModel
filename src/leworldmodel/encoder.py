@@ -1,12 +1,17 @@
 # %%
 
-import torch.nn as nn
+from torch import nn
 
+from .projector import Projector
 from .vision_transformer import VisionTransformer
 
 # %%
 
 class Encoder(nn.Module):
+    """
+    Encoder of LeWM. Applies the projection to the output 
+    of VIT (CLS representation)
+    """
 
     def __init__(
             self, 
@@ -18,6 +23,7 @@ class Encoder(nn.Module):
             QK_dim, 
             V_dim, 
             hidden_dim_mlp,
+            hidden_dim_proj
         ):
 
         super().__init__()
@@ -32,12 +38,14 @@ class Encoder(nn.Module):
             hidden_dim_mlp=hidden_dim_mlp
         )
 
-        self.mlp = nn.Sequential(
-            nn.Linear(embedding_dim, embedding_dim)
+        self.proj = Projector(
+            input_dim=embedding_dim,
+            hidden_dim=hidden_dim_proj
         )
 
-        self.bn = nn.BatchNorm1d(embedding_dim)
-
     def forward(self, X, mask=False):
+        """
+        X_cls : B * embedding_dim (192)
+        """
         X_cls = self.vit(X, mask)
-        return self.bn(self.mlp(X_cls))
+        return self.proj(X_cls)
