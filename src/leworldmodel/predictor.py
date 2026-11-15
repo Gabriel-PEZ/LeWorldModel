@@ -54,12 +54,12 @@ class Predictor(nn.Module):
         # here it encodes the temporal position
         self.E_pos = nn.Parameter(torch.randn(1, N, embedding_dim))
 
-    def forward(self, X, a, mask=True):
+    def forward(self, X, A, mask=True):
         """
         X : (B, N, d) B = batch_size, N = history length, d = embedding_dim
         """
-        a = self.action_embedder(a)
+        A = self.action_embedder(A)
         X = X + self.E_pos[:, :X.sahpe[1], :] # in case where dim 2 of X is < N
         for layer in range(self.num_layers):
-            X = self.transformer_blocks[layer](X, a, mask)
+            X = self.transformer_blocks[layer](X, A, mask)
         return self.proj(self.ln(X))

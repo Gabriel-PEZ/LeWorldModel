@@ -13,14 +13,17 @@ class ActionEmbedder(nn.Module):
             self, 
             frame_skip, 
             action_dim,
+            input_dim=10, 
+            hidden_dim=768, # = hidden dim mlp of encoder
+            output_dim=192 # = embedding dim 
         ):
 
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(frame_skip * action_dim, 10),
-            nn.Linear(10, 768),
+            nn.Linear(frame_skip * action_dim, input_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.SiLU(),
-            nn.Linear(768, 192)
+            nn.Linear(hidden_dim, output_dim)
         )
 
     def forward(self, A):
