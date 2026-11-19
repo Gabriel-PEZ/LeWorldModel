@@ -40,6 +40,11 @@ class LeWorldModel(nn.Module):
         hat(z_10) = f(z_1, ..., z_9) instead of hat(z_10) = f(z_7, z_8, z_9)
         If T = 4, the causal mask insures that hat(z_10) = f(z_7, z_8, z_9)
         since the sequence is (z_7, z_8, z_9, z_10)
+
+        Returns : 
+            - Z : (B, T, embedding_dim) the learned representations from the encoder 
+            - Z_pred : (B, T-1, embedding_dim) the predictions 
+            hat(Z_{t+1}) = Pred(Z_t, Z_{t-1}, Z_{t-3}, A_t, A_{t-1}, A_{t-3}) 
         """
 
         # encoder accepts only (B, 3, image_size, image_size)
