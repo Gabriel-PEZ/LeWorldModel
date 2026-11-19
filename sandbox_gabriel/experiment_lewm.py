@@ -2,18 +2,19 @@
 
 import torch
 
+from leworldmodel.loss import lewm_loss
 from leworldmodel.model import LeWorldModel
 
 # %%
 
-# device = ("cuda" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = ("cuda" if torch.cuda.is_available() else "cpu")
+# device = "cpu"
 print(device)
 
 # %%
 
 torch.manual_seed(10)
-B = 128
+B = 16
 T = 4
 K = 5
 
@@ -55,8 +56,13 @@ model = LeWorldModel(
     params_predictor=params_predictor
 ).to(device)
 
-print(next(model.parameters()).device)
+# %%
+
+model.train()
 
 Z, Z_pred = model(images, actions)
 
-# %%
+loss = lewm_loss(Z, Z_pred)
+loss.backward()
+
+print("Loss:", loss.item())
