@@ -28,7 +28,7 @@ B = 16
 T = 4
 K = 5
 
-epochs = 10
+epochs = 15
 learning_rate = 5e-5
 weight_decay = 1e-3
 lamb_reg = 0.09
@@ -48,37 +48,47 @@ S_1 = (o_5, o_10, o_15, o_20) (sample_stride = 5, if sample_stride = 1 then S_1 
 S_2 = (o_10, o_15, o_20, o_25)
 # ...
 """
-dataset = PushTDataset(
-    path=project_root / "data" / "pusht" / "pusht_expert_train.h5",
-    sequence_length=T,
-    frame_skip=K,
-    max_episodes=1000,
-    sample_stride=5,
-)
+# %%
+# Fixed train / validation / test split by episode
 
-# Split by episode, not by sequence
+data_path = project_root / "data" / "pusht" / "pusht_expert_train.h5"
 
-with h5py.File(dataset.path, "r") as f:
+with h5py.File(data_path, "r") as f:
     episode_idx = np.asarray(f["episode_idx"][:]).flatten()
 
-print(episode_idx)
-
-# %%
-
-sequence_episodes = episode_idx[dataset.starts]
-unique_episodes = np.unique(sequence_episodes)
+unique_episodes = np.unique(episode_idx)
 
 rng = np.random.default_rng(3072)
 rng.shuffle(unique_episodes)
 
-n_train = int(0.9 * len(unique_episodes))
+# un seul gros split train/test/val au cas ou on reprend le training 
+# pour éviter le leakage si on augmente le nombre de données d'entraînement
+train_pool = unique_episodes[:-4000]
+val_pool = unique_episodes[-4000:-2000]
+test_episodes = unique_episodes[-2000:]
 
-train_episodes = unique_episodes[:n_train]
-val_episodes = unique_episodes[n_train:]
+# episodes used for this training
+N_TRAIN = 2000
+N_VAL = 200
+
+train_episodes = train_pool[:N_TRAIN]
+val_episodes = val_pool[:N_VAL]
+
+dataset = PushTDataset(
+    path=data_path,
+    sequence_length=T,
+    frame_skip=K,
+    max_episodes=None,
+    sample_stride=5,
+    action_stats_episodes=train_episodes,
+)
+
+sequence_episodes = episode_idx[dataset.starts]
 
 train_indices = np.flatnonzero(
     np.isin(sequence_episodes, train_episodes)
 )
+
 val_indices = np.flatnonzero(
     np.isin(sequence_episodes, val_episodes)
 )
@@ -86,11 +96,22 @@ val_indices = np.flatnonzero(
 train_dataset = Subset(dataset, train_indices.tolist())
 val_dataset = Subset(dataset, val_indices.tolist())
 
-assert len(np.intersect1d(train_episodes, val_episodes)) == 0
+# checks
 
-print("Total unique episodes in HDF5:", len(np.unique(episode_idx)))
-print("Selected episodes:", len(unique_episodes))
-print("Total sequences:", len(dataset))
+assert len(np.intersect1d(train_episodes, val_episodes)) == 0
+assert len(np.intersect1d(train_episodes, test_episodes)) == 0
+assert len(np.intersect1d(val_episodes, test_episodes)) == 0
+assert len(train_episodes) == N_TRAIN
+assert len(val_episodes) == N_VAL
+assert len(train_dataset) > 0
+assert len(val_dataset) > 0
+
+print("Total episodes:", len(unique_episodes))
+print("Training episodes:", len(train_episodes))
+print("Validation episodes:", len(val_episodes))
+print("Reserved test episodes:", len(test_episodes))
+print("Training sequences:", len(train_dataset))
+print("Validation sequences:", len(val_dataset))
 
 # %%
 
@@ -116,7 +137,7 @@ val_dataloader = DataLoader(
     val_dataset,
     batch_size=B,
     shuffle=False,
-    drop_last=True,
+    drop_last=False,
     num_workers=0,
     pin_memory=(device == "cuda"),
 )
@@ -197,7 +218,7 @@ scheduler = torch.optim.lr_scheduler.SequentialLR(
 
 # %%
 
-checkpoint_dir = project_root / "checkpoints" / "run_02"
+checkpoint_dir = project_root / "checkpoints" / "run_01"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
 best_val_loss = float("inf")
@@ -325,6 +346,9 @@ for epoch in range(epochs):
         "history": history,
         "train_episodes": train_episodes.tolist(),
         "val_episodes": val_episodes.tolist(),
+        "test_episodes": test_episodes.tolist(),
+        "action_mean": dataset.action_mean,
+        "action_std": dataset.action_std,
     }
 
     torch.save(

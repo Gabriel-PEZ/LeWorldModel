@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 Pour les images : 
 - on divise chaque canal par 255 et on normalise en utilisant les stats de ImageNet
 Pour les actions : 
-- on calcule moyenne et std des actions sur tout le dataset et on normalise
+- on calcule moyenne et std des actions sur les épisodes de train et on normalise
 """
 
 # %%
@@ -26,6 +26,7 @@ class PushTDataset(Dataset):
         max_episodes=None,
         sample_stride=1,
         seed=42,
+        action_stats_episodes=None,
     ):
         self.path = str(path)
         self.sequence_length = sequence_length
@@ -40,9 +41,15 @@ class PushTDataset(Dataset):
             # only the actions and indexes are loaded here never the images.
             all_actions = np.asarray(f["action"][:], dtype=np.float32)
 
-        finite_actions = all_actions[np.isfinite(all_actions).all(axis=1)]
-        if len(finite_actions) == 0:
-            raise ValueError("No finite actions found in the dataset")
+        if action_stats_episodes is not None:
+            mask = np.isin(episode_idx, action_stats_episodes)
+            actions_for_stats = all_actions[mask]
+        else:
+            actions_for_stats = all_actions
+
+        finite_actions = actions_for_stats[np.isfinite(actions_for_stats).all(axis=1)]
+        if len(finite_actions) < 2:
+            raise ValueError("Not enough finite actions for normalization")
 
         self.action_mean = torch.from_numpy(finite_actions.mean(axis=0))
         self.action_std = torch.from_numpy(

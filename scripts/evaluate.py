@@ -29,73 +29,9 @@ K = 5
 print("Device:", device)
 
 # %%
-# Reconstruct the episodes used during the first training
-
-data_path = project_root / "data" / "pusht" / "pusht_expert_train.h5"
-
-train_dataset = PushTDataset(
-    path=data_path,
-    sequence_length=T,
-    frame_skip=K,
-    max_episodes=1000,
-    sample_stride=5,
-    seed=42,
-)
-
-# All available sequences
-
-full_dataset = PushTDataset(
-    path=data_path,
-    sequence_length=T,
-    frame_skip=K,
-    max_episodes=None,
-    sample_stride=5,
-)
-
-# %%
-
-with h5py.File(data_path, "r") as f:
-    episode_idx = np.asarray(f["episode_idx"][:]).flatten()
-
-train_episodes = np.unique(
-    episode_idx[train_dataset.starts]
-)
-
-all_sequence_episodes = episode_idx[full_dataset.starts]
-
-# Keep only episodes excluded from the first training
-
-test_indices = np.flatnonzero(
-    ~np.isin(all_sequence_episodes, train_episodes)
-)
-
-test_dataset = Subset(
-    full_dataset,
-    test_indices.tolist(),
-)
-
-assert not np.isin(
-    all_sequence_episodes[test_indices],
-    train_episodes,
-).any()
-
-print("Training episodes:", len(train_episodes))
-print("Test sequences:", len(test_dataset))
-
-# %%
-
-test_dataloader = DataLoader(
-    test_dataset,
-    batch_size=B,
-    shuffle=False,
-    drop_last=False,
-    num_workers=0,
-    pin_memory=(device == "cuda"),
-)
-
-# %%
 # Load the trained model
 
+# checkpoint_path = project_root / "checkpoints" / "run_01" / "best.pt"
 checkpoint_path = project_root / "checkpoints" / "last.pt"
 
 checkpoint = torch.load(
@@ -110,11 +46,79 @@ model = LeWorldModel(
 ).to(device)
 
 model.load_state_dict(checkpoint["model"])
-
 model.eval()
 
 print("Loaded epoch:", checkpoint["epoch"])
-print("Training loss:", checkpoint["loss"])
+print("Training loss:", checkpoint.get("train_loss", checkpoint.get("loss")))
+
+if "val_loss" in checkpoint:
+    print("Validation loss:", checkpoint["val_loss"])
+
+# %%
+# Reconstruct the test episodes
+
+data_path = project_root / "data" / "pusht" / "pusht_expert_train.h5"
+
+with h5py.File(data_path, "r") as f:
+    episode_idx = np.asarray(f["episode_idx"][:]).flatten()
+
+full_dataset = PushTDataset(
+    path=data_path,
+    sequence_length=T,
+    frame_skip=K,
+    max_episodes=None,
+    sample_stride=5,
+    action_stats_episodes=checkpoint.get("train_episodes") if "action_mean" in checkpoint else None,
+)
+
+if "action_mean" in checkpoint:
+    full_dataset.action_mean = checkpoint["action_mean"].cpu()
+    full_dataset.action_std = checkpoint["action_std"].cpu()
+
+if "test_episodes" in checkpoint:
+    test_episodes = np.asarray(checkpoint["test_episodes"])
+else:
+    train_dataset = PushTDataset(
+        path=data_path,
+        sequence_length=T,
+        frame_skip=K,
+        max_episodes=1000,
+        sample_stride=5,
+        seed=42,
+    )
+    train_episodes = np.unique(episode_idx[train_dataset.starts])
+    test_episodes = np.setdiff1d(np.unique(episode_idx), train_episodes)
+
+all_sequence_episodes = episode_idx[full_dataset.starts]
+
+test_indices = np.flatnonzero(
+    np.isin(all_sequence_episodes, test_episodes)
+)
+
+test_dataset = Subset(full_dataset, test_indices.tolist())
+
+assert len(test_dataset) > 0
+
+if "train_episodes" in checkpoint:
+    assert not np.isin(test_episodes, checkpoint["train_episodes"]).any()
+
+if "val_episodes" in checkpoint:
+    assert not np.isin(test_episodes, checkpoint["val_episodes"]).any()
+
+print("Test episodes:", len(test_episodes))
+print("Test sequences:", len(test_dataset))
+
+# %%
+
+test_dataloader = DataLoader(
+    test_dataset,
+    batch_size=B,
+    shuffle=True,
+    drop_last=False,
+    num_workers=0,
+    pin_memory=(device == "cuda"),
+    generator=torch.Generator().manual_seed(3072),
+)
 
 # %%
 # Evaluate prediction quality and latent representation statistics
@@ -169,9 +173,7 @@ with torch.no_grad():
 
         total_samples += batch_size
 
-        all_embeddings.append(
-            Z[:, 0, :].cpu()
-        )
+        all_embeddings.append(Z[:, 0, :].cpu())
 
 # %%
 # Results
@@ -181,7 +183,6 @@ avg_baseline_mse = total_baseline_mse / total_samples
 avg_cosine_similarity = total_cosine_similarity / total_samples
 
 embeddings = torch.cat(all_embeddings, dim=0)
-
 latent_std = embeddings.std(dim=0)
 
 print("Prediction MSE:", avg_mse)
