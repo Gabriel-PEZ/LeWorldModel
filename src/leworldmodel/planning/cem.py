@@ -2,8 +2,8 @@
 
 import torch
 
-from leworldmodel.rollout import rollout
 from leworldmodel.planning.cost import latent_cost
+from leworldmodel.rollout import rollout
 
 # %%
 
