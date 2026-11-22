@@ -8,7 +8,7 @@ from leworldmodel.rollout import rollout
 # %%
 
 @torch.no_grad()
-def cem(model, Z, A_past, Z_goal, H=5, n_samples=300, n_elites=30, n_iters=30):
+def cem(model, Z, A_past, Z_goal, H=5, n_samples=300, n_elites=30, n_iters=30, action_low=None, action_high=None):
     """
     Optimize a sequence of H action blocks using CEM.
 
@@ -21,6 +21,8 @@ def cem(model, Z, A_past, Z_goal, H=5, n_samples=300, n_elites=30, n_iters=30):
         n_samples : number of candidate trajectories per iteration
         n_elites : number of best trajectories retained
         n_iters : number of CEM iterations
+        action_low : (K*action_dim,), lower bounds in normalized action space
+        action_high : (K*action_dim,), upper bounds in normalized action space
 
     Output:
         U : (H, K*action_dim), optimized action sequence
@@ -59,6 +61,12 @@ def cem(model, Z, A_past, Z_goal, H=5, n_samples=300, n_elites=30, n_iters=30):
     for _ in range(n_iters):
 
         A_future = mu + sigma * torch.randn(n_samples, H, action_dim, device=Z.device)
+
+        if action_low is not None:
+            A_future = torch.maximum(A_future, action_low)
+
+        if action_high is not None:
+            A_future = torch.minimum(A_future, action_high)
 
         Z_pred = rollout(
             model,
