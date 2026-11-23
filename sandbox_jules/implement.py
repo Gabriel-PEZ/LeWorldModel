@@ -315,3 +315,60 @@ class Predictor(nn.Module):
         return self.proj(z_ln)
 
 #%%
+
+class LeWM(nn.Module):
+    def __init__(self, dim=192, proj_hidden_dim=2048, size_img=224, size_patch=14, enc_blocks=12, enc_heads=3, enc_dim_head=64, enc_mlp_dim=768, pred_blocks=6, pred_heads=16, pred_dim_head=64, pred_mlp_dim=2048, max_history=3, dim_act_in=10, hidden_dim_act=768):
+        super().__init__()
+
+        self.encoder = Encoder(
+            size_img=size_img,
+            dim_token=dim,
+            size_patch=size_patch,
+            nb_blocks=enc_blocks,
+            hidden_dim_transformer=enc_mlp_dim,
+            nb_heads=enc_heads,
+            dim_head=enc_dim_head,
+            hidden_dim_proj=proj_hidden_dim,
+        )
+
+        self.predictor = Predictor(
+            dim_in=dim,
+            nb_heads=pred_heads,
+            dim_head=pred_dim_head,
+            mlp_hidden_dim=pred_mlp_dim,
+            proj_hidden_dim=proj_hidden_dim,
+            nb_AdaLN_blocks=pred_blocks,
+            max_history=max_history,
+            dim_act_in=dim_act_in,
+            hidden_dim_act=hidden_dim_act,
+        )
+
+    def forward(self, x, act):
+        B, T, C, H, W = x.shape
+        # pour l'encoder on a besoin de B, C, H, W
+        # donc on fusionne B et T 
+        x_reshape = x.reshape(B*T, C, H, W)
+
+        # devient B*T, dim
+        z = self.encoder(x_reshape)
+
+        # repasse en B, T, dim
+        z = z.reshape(B,T,-1)
+    
+        # mais L = 3 et T = 4. on ne peut pas utiliser T = 4 dans le predictor
+        # car on a pas la GT de la 5eme image
+        z_input_predictor = z[:, :-1, :]
+        z_pred = self.predictor(z_input_predictor, act)
+        # B, T-1, 192
+
+        # on return z pour la loss
+        return z, z_pred
+
+#%%
+torch.manual_seed(0)
+model = LeWM()
+imgs = torch.randn(2, 4, 3, 224, 224)
+acts = torch.randn(2, 3, 10)
+z, z_pred = model(imgs, acts)
+assert z.shape == (2, 4, 192), f"z shape: {z.shape}"
+assert z_pred.shape == (2, 3, 192), f"z_pred shape: {z_pred.shape}"
