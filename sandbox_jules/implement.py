@@ -208,3 +208,110 @@ encoder = Encoder(
 )
 z = encoder(x_image)
 z.shape
+
+
+# embedding des actions de 10 à 192 afin de pouvoir moduler les features des latents
+class EmbeddingAction(nn.Module):
+    def __init__(self, dim_act_in=10, hidden_dim=768, dim_act_out=192):
+        super().__init__()
+        self.actionmlp = nn.Sequential(
+            nn.Linear(dim_act_in, dim_act_in),
+            nn.Linear(dim_act_in, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, dim_act_out),
+        )
+
+    def forward(self, act):
+        B, L, d = act.shape
+        act_embed = self.actionmlp(act)
+        return act_embed
+
+# block transformer avec modulation AdaLN
+class AdaLN_transformer(nn.Module):
+    def __init__(self, dim_in, nb_heads, dim_head, mlp_hidden_dim):
+        super().__init__()
+        # on enlève l'échelle pour appliquer celle de AdaLN
+        self.LN1 = nn.LayerNorm(
+            dim_in,
+            elementwise_affine=False
+        )
+        self.attention = Attention(dim_in, nb_heads, dim_head, causal = True)
+        # on enlève l'échelle pour appliquer celle de AdaLN
+        self.LN2 = nn.LayerNorm(
+            dim_in,
+            elementwise_affine=False
+        )
+        self.MLP = nn.Sequential(
+            nn.Linear(dim_in, mlp_hidden_dim),
+            nn.GELU(),
+            nn.Linear(mlp_hidden_dim, dim_in),
+        )
+
+        # SiLU ajoute de la non linéraité aux actions
+        # puis on empile les vecteurs d'échelles (6)
+        # mais on init pour laisser le temps au predictor de moduler
+        self.AdaLN = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(dim_in, 6 * dim_in),
+        )
+        nn.init.zeros_(self.AdaLN[-1].weight)
+        nn.init.zeros_(self.AdaLN[-1].bias)
+
+    def forward(self, z, act):
+        B, L, d = z.shape
+        # les 6 tenseurs empilés
+        AdaLN6 = self.AdaLN(act)
+        # découpe les features d'échelle
+        y1, b1, g1, y2, b2, g2 = torch.chunk(AdaLN6, 6, dim = -1)
+
+        # layer norm sans échelle
+        z_ln1 = self.LN1(z)
+        # modulation via AdaLN
+        z_ada1 = (1 + y1) * z_ln1 + b1
+        # ajout de la gate et modélise le résidu
+        z1 = z + g1 * (self.attention(z_ada1))
+
+        z_ln2 = self.LN2(z1)
+        z_ada2 = (1 + y2) * z_ln2 + b2
+        z2 = z1 + g2 * (self.MLP(z_ada2))
+
+        return z2
+
+emb = EmbeddingAction()
+a = torch.randn(2, 3, 10)
+assert emb(a).shape == (2, 3, 192)
+
+# %%
+class Predictor(nn.Module):
+    def __init__(self, dim_in, nb_heads, dim_head, mlp_hidden_dim, proj_hidden_dim ,nb_AdaLN_blocks, max_history, dim_act_in=10, hidden_dim_act=768):
+        super().__init__()
+        # embedding des actions
+        self.embeddingaction = EmbeddingAction(dim_act_in, hidden_dim_act, dim_in)
+        # ajout de l'embedding positionnel des latents 
+        # le réseau connait l'ordre des latents et donc leur hierarchie
+        self.pos_z_embedding = nn.Parameter(torch.randn(1, max_history, dim_in) * 0.02)
+
+        # block transformers
+        self.AdaLN_transformer_blocks = nn.ModuleList(
+            AdaLN_transformer(dim_in, nb_heads, dim_head, mlp_hidden_dim) for i in range(nb_AdaLN_blocks)
+        )
+
+        # post LN
+        self.LN_post_transformer = nn.LayerNorm(dim_in)
+
+        # projection avec batchnorm
+        self.proj = Projector(dim_in, proj_hidden_dim)
+        
+    def forward(self, z, act):
+        B, L, d = z.shape
+        act_embed = self.embeddingaction(act)
+        # selectionne le L correspondant (1,2,3)
+        z = z + self.pos_z_embedding[:, :L, :]
+
+        for block in self.AdaLN_transformer_blocks:
+            z = block(z, act_embed)
+
+        z_ln = self.LN_post_transformer(z)
+        return self.proj(z_ln)
+
+#%%
