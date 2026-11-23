@@ -51,3 +51,42 @@ class Attention(nn.Module):
 
 attention_layer = Attention(16,4,4,False)
 
+# %%
+x = torch.randn(5, 120, 16)
+y = attention_layer(x)
+y
+
+# %%
+# class pour la fin de l'encodeur (post CLS) et pour le predictor, post AdaLN sur les actions
+
+class Projector(nn.Module):
+    def __init__(self, dim_in, dim_hidden):
+        super().__init__()
+        self.MLP = nn.Sequential(
+            nn.Linear(dim_in, dim_hidden),
+            nn.BatchNorm1d(dim_hidden),
+            nn.GELU(),
+            nn.Linear(dim_hidden, dim_in)
+        )
+
+    def forward(self,x):
+
+        # le problème : 
+        # la fin de l'encodeur est de forme (B,dim) -> ok pour batchnorm
+        # l'input du predictor est de forme (B, L, dim) avec L le nombre de latents (transfomés par conditonnement) traités
+        # genre (Z0, Z5, Z10)
+        # du coup on passe en (BxL, dim)
+        d = x.shape[-1]
+        x_standard = x.reshape(-1, d)
+        y_standard = self.MLP(x_standard)
+        y = y_standard.reshape_as(x)
+
+        return y
+
+x_3 = torch.randn(5,3,120)
+projector_layer = Projector(120,240)
+print(projector_layer(x_3))
+
+x_2 = torch.randn(5,120)
+projector_layer = Projector(120,240)
+print(projector_layer(x_2))
